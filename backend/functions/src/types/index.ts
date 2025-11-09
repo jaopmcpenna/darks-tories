@@ -12,3 +12,20 @@ export interface ApiError {
   details?: unknown
 }
 
+// Chat types
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp?: string
+}
+
+export interface ChatRequest {
+  messages: ChatMessage[]
+  stream?: boolean
+}
+
+export interface ChatResponse {
+  message: ChatMessage
+  success: boolean
+}
+
