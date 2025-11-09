@@ -16,16 +16,25 @@ export async function generateChatResponse(
   let session = gameSession || createInitialGameSession()
   
   // Detect current game state from messages
-  const currentState = detectGameState(messages, session.gameState)
+  const currentState = detectGameState(messages, session.gameState, session.selectedStoryId)
   
   // If story was completed in previous interaction, transition back to story selection
   // This happens when user sends a new message after story completion
-  if (session.gameState === 'story_completed' && currentState === 'story_completed') {
+  if (session.gameState === 'story_completed') {
     // User is sending a new message after story completion - transition to story selection
+    // Clear selected story to allow new selection
+    // IMPORTANT: Force transition to before_story_selection regardless of detected state
+    // to prevent false positives from old story info in messages
     session = updateGameSession(session, {
       gameState: 'before_story_selection',
       selectedStoryId: undefined, // Clear selected story to allow new selection
     })
+    // Re-detect state after clearing selectedStoryId to get accurate detection
+    const reDetectedState = detectGameState(messages, session.gameState, session.selectedStoryId)
+    // Only update if we detect a new story selection (story_ongoing)
+    if (reDetectedState === 'story_ongoing') {
+      session = updateGameSession(session, { gameState: reDetectedState })
+    }
   } else {
     // Update session state
     session = updateGameSession(session, { gameState: currentState })
@@ -78,7 +87,7 @@ export async function generateChatResponse(
     response = await generateNarratorResponse(messages, story)
     
     // Check if story was completed
-    const newState = detectGameState([...messages, { role: 'assistant', content: response }], session.gameState)
+    const newState = detectGameState([...messages, { role: 'assistant', content: response }], session.gameState, session.selectedStoryId)
     if (newState === 'story_completed') {
       // Only add to completedStoryIds if not already there
       const updatedCompletedIds = session.completedStoryIds.includes(session.selectedStoryId!)
@@ -113,32 +122,42 @@ export async function generateChatResponse(
 
 /**
  * Stream a chat response using the appropriate agent based on game state
+ * Returns both the stream and metadata about selected story (if any)
  */
 export async function streamChatResponse(
   messages: ChatMessage[],
   gameSession?: GameSession
-): Promise<ReadableStream<string>> {
+): Promise<{ stream: ReadableStream<string>; selectedStory?: { id: string; title: string; description: string; solution: string } }> {
   // Initialize or use provided game session
   let session = gameSession || createInitialGameSession()
   
   // Detect current game state from messages
-  const currentState = detectGameState(messages, session.gameState)
+  const currentState = detectGameState(messages, session.gameState, session.selectedStoryId)
   
   // If story was completed in previous interaction, transition back to story selection
   // This happens when user sends a new message after story completion
-  if (session.gameState === 'story_completed' && currentState === 'story_completed') {
+  if (session.gameState === 'story_completed') {
     // User is sending a new message after story completion - transition to story selection
+    // Clear selected story to allow new selection
+    // IMPORTANT: Force transition to before_story_selection regardless of detected state
+    // to prevent false positives from old story info in messages
     session = updateGameSession(session, {
       gameState: 'before_story_selection',
       selectedStoryId: undefined, // Clear selected story to allow new selection
     })
+    // Re-detect state after clearing selectedStoryId to get accurate detection
+    const reDetectedState = detectGameState(messages, session.gameState, session.selectedStoryId)
+    // Only update if we detect a new story selection (story_ongoing)
+    if (reDetectedState === 'story_ongoing') {
+      session = updateGameSession(session, { gameState: reDetectedState })
+    }
   } else {
     // Update session state
     session = updateGameSession(session, { gameState: currentState })
   }
 
   if (session.gameState === 'before_story_selection') {
-    // Use story selection agent
+    // Use story selection agent - it now returns both stream and selectedStory
     return streamStorySelectionResponse(messages, session.completedStoryIds)
   } else if (session.gameState === 'story_ongoing' || session.gameState === 'story_completed') {
     // Use narrator agent - need to get the story
@@ -151,7 +170,8 @@ export async function streamChatResponse(
       throw new Error(`Story with ID ${session.selectedStoryId} not found`)
     }
 
-    return streamNarratorResponse(messages, story)
+    // Narrator agent doesn't select stories, so no selectedStory metadata
+    return { stream: await streamNarratorResponse(messages, story) }
   } else {
     // Fallback to story selection
     return streamStorySelectionResponse(messages, session.completedStoryIds)

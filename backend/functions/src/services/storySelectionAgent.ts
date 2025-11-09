@@ -70,6 +70,10 @@ IMPORTANT TRANSITION RULES:
 - After providing this information, the narrator agent will take over
 - Be enthusiastic and create anticipation!
 
+IMPORTANTT CONVERSATION FLOW:
+- Be synthetic and concise.
+- Explore one question at time.
+
 Be friendly, conversational, and help create excitement about the game!`
 }
 
@@ -237,11 +241,12 @@ Now transition to narrator mode and read the story description to start the game
 
 /**
  * Stream a story selection response using OpenAI GPT-4 Turbo
+ * Returns both the stream and the selected story (if any)
  */
 export async function streamStorySelectionResponse(
   messages: ChatMessage[],
   completedStoryIds: string[] = []
-): Promise<ReadableStream<string>> {
+): Promise<{ stream: ReadableStream<string>; selectedStory?: { id: string; title: string; description: string; solution: string } }> {
   const apiKey = getOpenAIApiKey()
   
   if (!apiKey) {
@@ -272,6 +277,7 @@ export async function streamStorySelectionResponse(
   const availableStories = await getAvailableStories(completedStoryIds)
   const availableStoriesCount = availableStories.length
   let allStoriesCompleted = false
+  let selectedStory: { id: string; title: string; description: string; solution: string } | undefined
 
   if (availableStoriesCount === 0) {
     console.log('[storySelectionAgent] No available stories - all stories have been completed!')
@@ -290,6 +296,12 @@ export async function streamStorySelectionResponse(
 
     if (story) {
       console.log(`[storySelectionAgent] Story selected from database: "${story.title}" (ID: ${story.id})`)
+      selectedStory = {
+        id: story.id,
+        title: story.title,
+        description: story.description,
+        solution: story.solution,
+      }
       // Add story context to the last message
       // NOTE: Do NOT include the solution here - it's only for the narrator agent
       const contextMessage = `Available story selected:
@@ -357,7 +369,7 @@ Now transition to narrator mode and read the story description to start the game
       },
     })
 
-    return stream
+    return { stream, selectedStory }
   } catch (error) {
     console.error('Error streaming story selection response:', error)
     throw new Error(`Failed to stream response: ${error instanceof Error ? error.message : 'Unknown error'}`)

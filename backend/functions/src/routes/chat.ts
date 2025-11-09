@@ -115,8 +115,8 @@ router.post('/stream', async (req: Request, res: Response) => {
     res.setHeader('Connection', 'keep-alive')
     res.setHeader('X-Accel-Buffering', 'no') // Disable nginx buffering
 
-    // Generate streaming response
-    const stream = await streamChatResponse(messages, session)
+    // Generate streaming response - now returns both stream and selectedStory
+    const { stream, selectedStory } = await streamChatResponse(messages, session)
     let fullResponse = ''
 
     // Stream the response
@@ -136,8 +136,7 @@ router.post('/stream', async (req: Request, res: Response) => {
           
           // Detect final state from the complete response
           const { detectGameState, extractStoryFromMessages } = await import('../utils/gameState')
-          const { generateStorySelectionResponse } = await import('../services/storySelectionAgent')
-          const finalState = detectGameState([...messages, responseMessage], session.gameState)
+          const finalState = detectGameState([...messages, responseMessage], session.gameState, session.selectedStoryId)
           
           // Try to extract story info from messages to get selectedStoryId
           // This happens when story selection agent transitions to narrator
@@ -156,9 +155,26 @@ router.post('/stream', async (req: Request, res: Response) => {
             currentStoryId,
             currentGameState: session.gameState,
             responsePreview: fullResponse.substring(0, 200),
+            hasSelectedStory: !!selectedStory,
+            selectedStoryId: selectedStory?.id,
           })
           
-          if (finalState === 'story_completed' && currentStoryId) {
+          // IMPORTANT: If we have a selectedStory, it means a new story was just selected
+          // In this case, we should transition to story_ongoing, not story_completed
+          if (selectedStory && selectedStory.id) {
+            // A new story was selected - transition to story_ongoing
+            console.log('[Stream] New story selected, transitioning to story_ongoing:', {
+              storyId: selectedStory.id,
+              title: selectedStory.title,
+              previousState: finalState,
+            })
+            updatedSession = {
+              ...updatedSession,
+              gameState: 'story_ongoing',
+              selectedStoryId: selectedStory.id,
+            }
+          } else if (finalState === 'story_completed' && currentStoryId) {
+            // Story was completed (no new story selected)
             // Only add to completedStoryIds if not already there
             if (!updatedCompletedStoryIds.includes(currentStoryId)) {
               updatedCompletedStoryIds = [...updatedCompletedStoryIds, currentStoryId]
@@ -174,11 +190,29 @@ router.post('/stream', async (req: Request, res: Response) => {
               gameState: finalState,
               completedStoryIds: updatedCompletedStoryIds,
             }
-          } else if (finalState === 'story_ongoing' && finalState !== session.gameState) {
-            // Transitioning to story_ongoing
-            updatedSession = {
-              ...updatedSession,
-              gameState: finalState,
+          } else if (finalState === 'story_ongoing') {
+            // Transitioning to story_ongoing - set selectedStoryId if we have it
+            const selectedStoryIdToSet = selectedStory?.id || updatedSession.selectedStoryId || session.selectedStoryId
+            if (selectedStoryIdToSet) {
+              console.log('[Stream] Transitioning to story_ongoing with selectedStoryId:', {
+                storyId: selectedStoryIdToSet,
+                fromSelectedStory: !!selectedStory,
+                title: selectedStory?.title,
+              })
+              updatedSession = {
+                ...updatedSession,
+                gameState: finalState,
+                selectedStoryId: selectedStoryIdToSet,
+              }
+            } else {
+              console.warn('[Stream] Transitioning to story_ongoing but no selectedStoryId available!', {
+                hasSelectedStory: !!selectedStory,
+                hasStoryInfo: !!storyInfo,
+              })
+              updatedSession = {
+                ...updatedSession,
+                gameState: finalState,
+              }
             }
           } else if (finalState !== session.gameState) {
             updatedSession = {
@@ -192,26 +226,6 @@ router.post('/stream', async (req: Request, res: Response) => {
             console.warn('[Stream] Detected story_completed but no selectedStoryId in session!', {
               session: JSON.stringify(session, null, 2),
             })
-          }
-          
-          // If we're transitioning to story_ongoing but don't have selectedStoryId,
-          // we need to get it by calling generateStorySelectionResponse (non-streaming)
-          // to get the selectedStoryId
-          if (finalState === 'story_ongoing' && !updatedSession.selectedStoryId && storyInfo?.title) {
-            try {
-              // Make a non-streaming call to get the selectedStoryId
-              // This is a workaround for streaming mode
-              const selectionResult = await generateStorySelectionResponse(messages, session.completedStoryIds)
-              if (selectionResult.selectedStory) {
-                updatedSession = {
-                  ...updatedSession,
-                  selectedStoryId: selectionResult.selectedStory.id,
-                }
-              }
-            } catch (error) {
-              console.error('Failed to get selectedStoryId:', error)
-              // Continue without selectedStoryId - next request should have it
-            }
           }
           
           // Send metadata at the end

@@ -38,7 +38,44 @@
     </div>
 
     <div class="input-container">
-      <form @submit.prevent="handleSendMessage" class="input-form">
+      <!-- Voice mode button (centered) -->
+      <div class="voice-controls">
+        <button
+          @click="toggleVoiceMode"
+          :class="['voice-btn', { active: voiceStore.isVoiceModeActive, listening: voiceStore.isListening, speaking: voiceStore.isSpeaking }]"
+          :disabled="chatStore.isLoading"
+          type="button"
+        >
+          <svg v-if="!voiceStore.isVoiceModeActive" class="voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+          <svg v-else-if="voiceStore.isListening" class="voice-icon listening" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <circle cx="12" cy="12" r="3" class="pulse"></circle>
+          </svg>
+          <svg v-else-if="voiceStore.isSpeaking" class="voice-icon speaking" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <svg v-else class="voice-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
+        <p v-if="voiceStore.isVoiceModeActive" class="voice-status">
+          <span v-if="voiceStore.isListening">Gravando... Clique para parar</span>
+          <span v-else-if="voiceStore.isSpeaking">Falando...</span>
+          <span v-else>Clique para falar</span>
+        </p>
+      </div>
+
+      <!-- Text input (hidden when voice mode is active) -->
+      <form v-if="!voiceStore.isVoiceModeActive" @submit.prevent="handleSendMessage" class="input-form">
         <textarea
           v-model="inputMessage"
           @keydown.enter.exact.prevent="handleSendMessage"
@@ -64,11 +101,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted } from 'vue'
+import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
-import type { ChatMessage } from '../types'
+import { useVoiceStore } from '../stores/voice'
 
 const chatStore = useChatStore()
+const voiceStore = useVoiceStore()
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -145,12 +183,104 @@ watch(
   }
 )
 
+// Voice mode handlers
+const toggleVoiceMode = async () => {
+  if (voiceStore.isVoiceModeActive) {
+    // If currently listening, stop and process
+    if (voiceStore.isListening) {
+      try {
+        const transcribedText = await voiceStore.stopListening()
+        if (transcribedText && transcribedText.trim()) {
+          // Send the transcribed message
+          await chatStore.sendChatMessage(transcribedText, true)
+          await nextTick()
+          scrollToBottom()
+        }
+        // Keep voice mode active but DON'T restart listening automatically
+        // User needs to click again to speak
+      } catch (error) {
+        console.error('Error handling voice input:', error)
+        // Only deactivate if it's a critical error (not just empty transcription)
+        if (error instanceof Error && !error.message.includes('empty')) {
+          voiceStore.setVoiceModeActive(false)
+        }
+      }
+    } else if (voiceStore.isSpeaking) {
+      // If speaking, stop the audio
+      voiceStore.stopSpeaking()
+    } else {
+      // Not listening and not speaking - start listening
+      try {
+        await voiceStore.startListening()
+      } catch (error) {
+        console.error('Failed to start listening:', error)
+        voiceStore.setVoiceModeActive(false)
+      }
+    }
+  } else {
+    // Activate voice mode but DON'T start listening automatically
+    // User needs to click to start speaking
+    voiceStore.setVoiceModeActive(true)
+    voiceStore.clearError()
+  }
+}
+
+// Removed automatic restart of listening - user must click to speak again
+
+// Track the last message we've spoken to avoid duplicate playback
+const lastSpokenMessageId = ref<string | null>(null)
+
+// Auto-play audio when assistant message arrives (if voice mode is active)
+// Watch both lastMessage content and streaming state to ensure we only play after streaming completes
+watch(
+  () => [chatStore.lastMessage?.content, chatStore.isStreaming, chatStore.isLoading, chatStore.lastMessage?.timestamp],
+  async ([, isStreaming, isLoading, timestamp]) => {
+    const message = chatStore.lastMessage
+    const messageId: string | null = (timestamp && typeof timestamp === 'string') 
+      ? timestamp 
+      : (message ? `${message.role}-${message.content.slice(0, 20)}` : null)
+    
+    // Only play audio if:
+    // 1. Message exists and is from assistant
+    // 2. Voice mode is active
+    // 3. Not currently speaking
+    // 4. Message has content
+    // 5. Streaming has finished (not streaming and not loading)
+    // 6. We haven't already spoken this message
+    if (
+      message &&
+      message.role === 'assistant' &&
+      voiceStore.isVoiceModeActive &&
+      !voiceStore.isSpeaking &&
+      message.content.trim() &&
+      !isStreaming &&
+      !isLoading &&
+      messageId !== lastSpokenMessageId.value
+    ) {
+      try {
+        lastSpokenMessageId.value = messageId
+        await voiceStore.speak(message.content)
+        // After speaking, DON'T restart listening automatically
+        // User needs to click again to speak
+      } catch (error) {
+        console.error('Error speaking message:', error)
+      }
+    }
+  },
+  { immediate: false }
+)
+
 // Focus input on mount
 onMounted(() => {
-  if (inputRef.value) {
+  if (inputRef.value && !voiceStore.isVoiceModeActive) {
     inputRef.value.focus()
   }
   scrollToBottom()
+})
+
+// Cleanup on unmount
+onUnmounted(() => {
+  voiceStore.cleanup()
 })
 </script>
 
@@ -335,6 +465,98 @@ onMounted(() => {
   padding: 1.5rem;
   border-top: 1px solid #333;
   background: #222;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.voice-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.voice-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 3px solid #444;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.voice-btn:hover:not(:disabled) {
+  border-color: #2d5aa0;
+  background: #333;
+  transform: scale(1.05);
+}
+
+.voice-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.voice-btn.active {
+  border-color: #2d5aa0;
+  background: #2d5aa0;
+  color: #fff;
+}
+
+.voice-btn.listening {
+  border-color: #ff6b6b;
+  background: #ff6b6b;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.voice-btn.speaking {
+  border-color: #4ecdc4;
+  background: #4ecdc4;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.voice-icon {
+  width: 32px;
+  height: 32px;
+}
+
+.voice-icon.listening .pulse {
+  animation: pulse-circle 1.5s ease-in-out infinite;
+}
+
+.voice-status {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #999;
+  text-align: center;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(45, 90, 160, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 10px rgba(45, 90, 160, 0);
+  }
+}
+
+@keyframes pulse-circle {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
 }
 
 .input-form {

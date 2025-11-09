@@ -6,9 +6,21 @@ import cors from 'cors'
 const app = express()
 
 // Middleware
-app.use(cors({ origin: true }))
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
+// CORS configuration - allow all origins for development
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'xi-api-key'],
+}))
+
+// Handle preflight requests
+app.options('*', cors())
+
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ extended: true, limit: '50mb' }))
+// Support raw body for audio uploads (will be handled as base64 in JSON)
+app.use(express.raw({ type: 'audio/*', limit: '50mb' }))
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -32,7 +44,9 @@ app.get('/health', (req, res) => {
 
 // Import routes
 import chatRoutes from './routes/chat'
-app.use('/api/chat', chatRoutes)
+import voiceRoutes from './routes/voice'
+app.use('/chat', chatRoutes)
+app.use('/voice', voiceRoutes)
 
 // Export Cloud Function
 export const api = functions.region('us-central1').https.onRequest(app)

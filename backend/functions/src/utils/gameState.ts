@@ -4,41 +4,64 @@ import type { GameState, GameSession } from '../types/game'
 /**
  * Detect game state from conversation messages
  */
-export function detectGameState(messages: ChatMessage[], currentState?: GameState): GameState {
+export function detectGameState(messages: ChatMessage[], currentState?: GameState, selectedStoryId?: string): GameState {
   // If we have an explicit state, use it (unless we detect a transition)
   if (currentState) {
     // Check for transitions
-    const conversationText = messages.map((msg) => msg.content).join(' ').toLowerCase()
+    // Use only the last assistant message to detect solution (where it would be revealed)
+    // This avoids false positives from old messages with "Solution:" from previous stories
+    const lastAssistantMessage = [...messages].reverse().find((msg) => msg.role === 'assistant')
+    const lastAssistantText = lastAssistantMessage?.content.toLowerCase() || ''
     
     // Check if story has been completed
     if (currentState === 'story_ongoing') {
+      // Check only the last assistant message for solution indicators
       const hasSolution = 
-        conversationText.includes('solution:') ||
-        conversationText.includes('solução:') ||
-        conversationText.includes('the answer is') ||
-        conversationText.includes('a resposta é') ||
-        conversationText.includes('here is the full solution') ||
-        conversationText.includes('aqui está a solução completa')
+        lastAssistantText.includes('solution:') ||
+        lastAssistantText.includes('solução:') ||
+        lastAssistantText.includes('the answer is') ||
+        lastAssistantText.includes('a resposta é') ||
+        lastAssistantText.includes('here is the full solution') ||
+        lastAssistantText.includes('aqui está a solução completa')
       
       if (hasSolution) {
         console.log('[detectGameState] Story completed detected!', {
           currentState,
-          conversationTextPreview: conversationText.substring(0, 300),
+          lastAssistantPreview: lastAssistantText.substring(0, 200),
         })
         return 'story_completed'
       }
     }
     
     // Check if we've transitioned to narrator (story selected)
+    // IMPORTANT: Only detect this transition if we don't have a selectedStoryId yet
+    // This prevents false positives when old story info is still in the messages
     if (currentState === 'before_story_selection') {
-      if (
-        conversationText.includes('title:') ||
-        conversationText.includes('description:') ||
-        conversationText.includes('let\'s begin') ||
-        conversationText.includes('vamos começar') ||
-        conversationText.includes('perfect! let\'s begin') ||
-        conversationText.match(/title:\s*["']?[^"']+["']?/i)
-      ) {
+      // Only detect story_ongoing if:
+      // 1. We don't have a selectedStoryId (meaning this is a new selection, not old data)
+      // 2. AND we detect story selection indicators in the LAST assistant message (new selection)
+      const lastAssistantMessage = [...messages].reverse().find((msg) => msg.role === 'assistant')
+      const lastAssistantText = lastAssistantMessage?.content.toLowerCase() || ''
+      
+      // Check if the last assistant message contains story selection indicators
+      // This ensures we're detecting a NEW story selection, not old story info
+      const hasNewStorySelection = 
+        (!selectedStoryId) && // No story currently selected
+        (
+          lastAssistantText.includes('title:') ||
+          lastAssistantText.includes('description:') ||
+          lastAssistantText.includes('let\'s begin') ||
+          lastAssistantText.includes('vamos começar') ||
+          lastAssistantText.includes('perfect! let\'s begin') ||
+          lastAssistantText.match(/title:\s*["']?[^"']+["']?/i)
+        )
+      
+      if (hasNewStorySelection) {
+        console.log('[detectGameState] New story selection detected in last assistant message', {
+          currentState,
+          hasSelectedStoryId: !!selectedStoryId,
+          lastAssistantPreview: lastAssistantText.substring(0, 200),
+        })
         return 'story_ongoing'
       }
     }

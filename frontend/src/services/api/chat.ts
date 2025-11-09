@@ -31,7 +31,7 @@ export async function* streamMessage(messages: ChatMessage[], gameSession?: Game
     gameSession,
   }
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api/api'
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
   const url = `${API_BASE_URL}/chat/stream`
 
   const response = await fetch(url, {
