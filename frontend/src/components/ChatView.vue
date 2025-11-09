@@ -1,187 +1,151 @@
 <template>
-  <div class="chat-container">
-    <div class="chat-header">
-      <h1>Dark Stories</h1>
-      <p class="subtitle">AI Narrator - Converse e crie histórias escuras</p>
-      <button v-if="chatStore.hasMessages" @click="handleClearChat" class="clear-btn">
-        Limpar Chat
-      </button>
-    </div>
-
-    <div ref="messagesContainer" class="messages-container">
-      <div v-if="!chatStore.hasMessages" class="welcome-message">
-        <p>Olá! Sou seu narrador de histórias escuras.</p>
-        <p>Comece uma conversa e eu criarei histórias atmosféricas e envolventes para você.</p>
+  <div class="chat-container" :class="{ 'sidebar-open': sidebarOpen }">
+    <!-- Stories Sidebar -->
+    <div class="stories-sidebar" :class="{ 'sidebar-open': sidebarOpen }">
+      <div class="sidebar-header">
+        <h2>Stories</h2>
+        <button @click="sidebarOpen = !sidebarOpen" class="toggle-sidebar-btn">
+          <svg v-if="sidebarOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"></path>
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h18M3 6h18M3 18h18"></path>
+          </svg>
+        </button>
       </div>
-
-      <div
-        v-for="(message, index) in chatStore.messages"
-        :key="index"
-        :class="['message', `message-${message.role}`]"
-      >
-        <div class="message-content">
-          <div class="message-text" v-html="formatMessage(message.content)"></div>
-          <div v-if="message.timestamp" class="message-time">
-            {{ formatTime(message.timestamp) }}
+      <div v-if="sidebarOpen" class="sidebar-content">
+        <div v-if="loadingStories" class="loading-stories">
+          <div class="spinner-small"></div>
+          <span>Loading stories...</span>
+        </div>
+        <div v-else-if="storiesError" class="stories-error">
+          <p>Error loading stories: {{ storiesError }}</p>
+        </div>
+        <div v-else-if="stories.length === 0" class="no-stories">
+          <p>No stories available</p>
+        </div>
+        <div v-else class="stories-list">
+          <div
+            v-for="story in stories"
+            :key="story.id"
+            :class="['story-item', { completed: isCompleted(story.id) }]"
+          >
+            <div class="story-header">
+              <h3 class="story-title">{{ story.title }}</h3>
+              <span v-if="isCompleted(story.id)" class="completed-badge">✓</span>
+            </div>
+            <p class="story-description">{{ story.description }}</p>
+            <div class="story-meta">
+              <span class="story-difficulty" :class="story.difficulty">{{ story.difficulty }}</span>
+              <span class="story-category">{{ story.category }}</span>
+            </div>
           </div>
         </div>
       </div>
-
-      <div v-if="chatStore.isLoading && !chatStore.isStreaming" class="loading-indicator">
-        <div class="spinner"></div>
-        <span>Pensando...</span>
-      </div>
-
-      <div v-if="chatStore.error" class="error-message">
-        <p>Erro: {{ chatStore.error }}</p>
-      </div>
     </div>
 
-    <div class="input-container">
-      <!-- Voice mode button (centered) -->
-      <div class="voice-controls">
-        <button
-          @click="toggleVoiceMode"
-          :class="['voice-btn', { active: voiceStore.isVoiceModeActive, listening: voiceStore.isListening, speaking: voiceStore.isSpeaking }]"
-          :disabled="chatStore.isLoading"
-          type="button"
-        >
-          <svg v-if="!voiceStore.isVoiceModeActive" class="voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="23"></line>
-            <line x1="8" y1="23" x2="16" y2="23"></line>
-          </svg>
-          <svg v-else-if="voiceStore.isListening" class="voice-icon listening" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <circle cx="12" cy="12" r="3" class="pulse"></circle>
-          </svg>
-          <svg v-else-if="voiceStore.isSpeaking" class="voice-icon speaking" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-          </svg>
-          <svg v-else class="voice-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="23"></line>
-            <line x1="8" y1="23" x2="16" y2="23"></line>
-          </svg>
-        </button>
-        <p v-if="voiceStore.isVoiceModeActive" class="voice-status">
-          <span v-if="voiceStore.isListening">Gravando... Clique para parar</span>
-          <span v-else-if="voiceStore.isSpeaking">Falando...</span>
-          <span v-else>Clique para falar</span>
-        </p>
-      </div>
+    <!-- Floating Toggle Button (when sidebar is closed) -->
+    <button
+      v-if="!sidebarOpen"
+      @click="sidebarOpen = true"
+      class="floating-toggle-btn"
+      type="button"
+      title="Show Stories"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 12h18M3 6h18M3 18h18"></path>
+      </svg>
+    </button>
 
-      <!-- Text input (hidden when voice mode is active) -->
-      <form v-if="!voiceStore.isVoiceModeActive" @submit.prevent="handleSendMessage" class="input-form">
-        <textarea
-          v-model="inputMessage"
-          @keydown.enter.exact.prevent="handleSendMessage"
-          @keydown.shift.enter.exact.prevent="inputMessage += '\n'"
-          @input="handleInputResize"
-          placeholder="Digite sua mensagem..."
-          :disabled="chatStore.isLoading"
-          class="message-input"
-          rows="1"
-          ref="inputRef"
-        ></textarea>
-        <button
-          type="submit"
-          :disabled="!inputMessage.trim() || chatStore.isLoading"
-          class="send-btn"
-        >
-          <span v-if="!chatStore.isLoading">Enviar</span>
-          <span v-else>...</span>
-        </button>
-      </form>
+    <!-- Voice Circle -->
+    <div class="voice-circle-wrapper">
+      <button
+        @click="toggleVoiceMode"
+        :class="['voice-circle', { 
+          active: voiceStore.isVoiceModeActive, 
+          listening: voiceStore.isListening, 
+          speaking: voiceStore.isSpeaking,
+          thinking: chatStore.isLoading || chatStore.isStreaming
+        }]"
+        :disabled="chatStore.isLoading && !voiceStore.isListening && !voiceStore.isSpeaking"
+        type="button"
+      >
+        <svg v-if="!voiceStore.isVoiceModeActive" class="voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+        <svg v-else-if="voiceStore.isListening" class="voice-icon listening" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <circle cx="12" cy="12" r="3" class="pulse"></circle>
+        </svg>
+        <svg v-else-if="voiceStore.isSpeaking" class="voice-icon speaking" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
+        <svg v-else-if="chatStore.isLoading || chatStore.isStreaming" class="voice-icon thinking" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+        <svg v-else class="voice-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted, onMounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useVoiceStore } from '../stores/voice'
+import { getStories } from '../services/api/stories'
+import type { Story } from '../services/api/stories'
 
 const chatStore = useChatStore()
 const voiceStore = useVoiceStore()
-const inputMessage = ref('')
-const messagesContainer = ref<HTMLElement | null>(null)
-const inputRef = ref<HTMLTextAreaElement | null>(null)
 
-const handleInputResize = () => {
-  if (inputRef.value) {
-    inputRef.value.style.height = 'auto'
-    inputRef.value.style.height = `${Math.min(inputRef.value.scrollHeight, 150)}px`
-  }
+// Stories sidebar state
+const sidebarOpen = ref(true)
+const stories = ref<Story[]>([])
+const loadingStories = ref(false)
+const storiesError = ref<string | null>(null)
+
+// Check if a story is completed
+const isCompleted = (storyId: string): boolean => {
+  return chatStore.gameSession.completedStoryIds.includes(storyId)
 }
 
-const handleSendMessage = async () => {
-  if (!inputMessage.value.trim() || chatStore.isLoading) {
-    return
-  }
-
-  const message = inputMessage.value.trim()
-  inputMessage.value = ''
+// Load stories on mount
+onMounted(async () => {
+  await loadStories()
   
-  // Reset textarea height
-  if (inputRef.value) {
-    inputRef.value.style.height = 'auto'
-  }
-
-  await chatStore.sendChatMessage(message, true)
-  
-  // Auto-scroll to bottom after message is sent
-  await nextTick()
-  scrollToBottom()
-}
-
-const handleClearChat = () => {
-  if (confirm('Tem certeza que deseja limpar o chat?')) {
-    chatStore.clearChat()
-  }
-}
-
-const scrollToBottom = () => {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  }
-}
-
-const formatMessage = (content: string): string => {
-  // Simple markdown-like formatting
-  return content
-    .replace(/\n/g, '<br>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-}
-
-const formatTime = (timestamp: string): string => {
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-}
-
-// Auto-scroll when new messages arrive
-watch(
-  () => chatStore.messages.length,
-  () => {
-    nextTick(() => {
-      scrollToBottom()
-    })
-  }
-)
-
-// Auto-scroll during streaming
-watch(
-  () => chatStore.lastMessage?.content,
-  () => {
-    if (chatStore.isStreaming) {
-      scrollToBottom()
+  // Watch for changes in completed stories to update the UI
+  watch(
+    () => chatStore.gameSession.completedStoryIds,
+    () => {
+      // Stories list will automatically update due to reactivity
     }
+  )
+})
+
+// Load stories from API
+const loadStories = async () => {
+  loadingStories.value = true
+  storiesError.value = null
+  try {
+    stories.value = await getStories()
+  } catch (error) {
+    storiesError.value = error instanceof Error ? error.message : 'Failed to load stories'
+    console.error('Error loading stories:', error)
+  } finally {
+    loadingStories.value = false
   }
-)
+}
 
 // Voice mode handlers
 const toggleVoiceMode = async () => {
@@ -193,8 +157,6 @@ const toggleVoiceMode = async () => {
         if (transcribedText && transcribedText.trim()) {
           // Send the transcribed message
           await chatStore.sendChatMessage(transcribedText, true)
-          await nextTick()
-          scrollToBottom()
         }
         // Keep voice mode active but DON'T restart listening automatically
         // User needs to click again to speak
@@ -224,8 +186,6 @@ const toggleVoiceMode = async () => {
     voiceStore.clearError()
   }
 }
-
-// Removed automatic restart of listening - user must click to speak again
 
 // Track the last message we've spoken to avoid duplicate playback
 const lastSpokenMessageId = ref<string | null>(null)
@@ -270,14 +230,6 @@ watch(
   { immediate: false }
 )
 
-// Focus input on mount
-onMounted(() => {
-  if (inputRef.value && !voiceStore.isVoiceModeActive) {
-    inputRef.value.focus()
-  }
-  scrollToBottom()
-})
-
 // Cleanup on unmount
 onUnmounted(() => {
   voiceStore.cleanup()
@@ -287,201 +239,271 @@ onUnmounted(() => {
 <style scoped>
 .chat-container {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   height: 100vh;
-  max-width: 900px;
-  margin: 0 auto;
+  width: 100vw;
   background: #1a1a1a;
   color: #e0e0e0;
+  position: relative;
 }
 
-.chat-header {
-  padding: 1.5rem;
-  border-bottom: 1px solid #333;
+/* Stories Sidebar */
+.stories-sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  width: 350px;
   background: #222;
+  border-right: 1px solid #333;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  z-index: 100;
+  transition: transform 0.3s ease;
 }
 
-.chat-header h1 {
+.stories-sidebar:not(.sidebar-open) {
+  transform: translateX(-100%);
+}
+
+.sidebar-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid #333;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #2a2a2a;
+}
+
+.sidebar-header h2 {
   margin: 0;
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   color: #fff;
 }
 
-.subtitle {
-  margin: 0;
-  font-size: 0.9rem;
-  color: #999;
-}
-
-.clear-btn {
-  align-self: flex-start;
-  margin-top: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: #444;
-  color: #fff;
+.toggle-sidebar-btn {
+  background: transparent;
   border: none;
-  border-radius: 4px;
+  color: #e0e0e0;
   cursor: pointer;
-  font-size: 0.85rem;
+  padding: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
   transition: background 0.2s;
 }
 
-.clear-btn:hover {
-  background: #555;
+.toggle-sidebar-btn:hover {
+  background: #333;
 }
 
-.messages-container {
+.toggle-sidebar-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.sidebar-content {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+  padding: 1rem;
 }
 
-.messages-container::-webkit-scrollbar {
+.sidebar-content::-webkit-scrollbar {
   width: 8px;
 }
 
-.messages-container::-webkit-scrollbar-track {
+.sidebar-content::-webkit-scrollbar-track {
   background: #1a1a1a;
 }
 
-.messages-container::-webkit-scrollbar-thumb {
+.sidebar-content::-webkit-scrollbar-thumb {
   background: #444;
   border-radius: 4px;
 }
 
-.messages-container::-webkit-scrollbar-thumb:hover {
+.sidebar-content::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
 
-.welcome-message {
-  text-align: center;
-  padding: 3rem 1rem;
-  color: #999;
-  line-height: 1.6;
-}
-
-.message {
+.loading-stories,
+.stories-error,
+.no-stories {
   display: flex;
   flex-direction: column;
-  max-width: 80%;
-  animation: fadeIn 0.3s ease-in;
-}
-
-.message-user {
-  align-self: flex-end;
-}
-
-.message-assistant {
-  align-self: flex-start;
-}
-
-.message-content {
-  padding: 1rem 1.25rem;
-  border-radius: 12px;
-  line-height: 1.6;
-}
-
-.message-user .message-content {
-  background: #2d5aa0;
-  color: #fff;
-  border-bottom-right-radius: 4px;
-}
-
-.message-assistant .message-content {
-  background: #2a2a2a;
-  color: #e0e0e0;
-  border-bottom-left-radius: 4px;
-}
-
-.message-text {
-  word-wrap: break-word;
-  white-space: pre-wrap;
-}
-
-.message-text :deep(strong) {
-  font-weight: 600;
-}
-
-.message-text :deep(em) {
-  font-style: italic;
-}
-
-.message-time {
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
-  opacity: 0.7;
-}
-
-.loading-indicator {
-  display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 1rem;
+  justify-content: center;
+  padding: 2rem;
   color: #999;
-  font-size: 0.9rem;
+  text-align: center;
 }
 
-.spinner {
-  width: 20px;
-  height: 20px;
+.loading-stories {
+  gap: 1rem;
+}
+
+.spinner-small {
+  width: 24px;
+  height: 24px;
   border: 2px solid #444;
   border-top-color: #2d5aa0;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.error-message {
-  padding: 1rem;
-  background: #4a1f1f;
-  color: #ff6b6b;
-  border-radius: 8px;
-  border: 1px solid #6a2f2f;
-}
-
-.input-container {
-  padding: 1.5rem;
-  border-top: 1px solid #333;
-  background: #222;
+.stories-list {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-.voice-controls {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
+.story-item {
+  padding: 1rem;
+  background: #2a2a2a;
+  border-radius: 8px;
+  border: 1px solid #333;
+  transition: all 0.2s;
 }
 
-.voice-btn {
-  width: 80px;
-  height: 80px;
+.story-item:hover {
+  background: #333;
+  border-color: #444;
+}
+
+.story-item.completed {
+  opacity: 0.7;
+  border-color: #4ecdc4;
+}
+
+.story-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.story-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+  flex: 1;
+}
+
+.completed-badge {
+  background: #4ecdc4;
+  color: #1a1a1a;
   border-radius: 50%;
-  border: 3px solid #444;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.story-description {
+  margin: 0.5rem 0;
+  color: #ccc;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.story-meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.story-difficulty {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.story-difficulty.easy {
+  background: #2d5aa0;
+  color: #fff;
+}
+
+.story-difficulty.medium {
+  background: #ffa500;
+  color: #1a1a1a;
+}
+
+.story-difficulty.hard {
+  background: #ff6b6b;
+  color: #fff;
+}
+
+.story-category {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  background: #444;
+  color: #ccc;
+}
+
+.voice-circle-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  margin-left: 0;
+  transition: margin-left 0.3s ease;
+  padding-left: 0;
+}
+
+.chat-container.sidebar-open .voice-circle-wrapper {
+  margin-left: 350px;
+}
+
+.floating-toggle-btn {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #2d5aa0;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
+}
+
+.floating-toggle-btn:hover {
+  background: #3d6ab0;
+  transform: scale(1.1);
+}
+
+.floating-toggle-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.voice-circle {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  border: 4px solid #444;
   background: #2a2a2a;
   color: #e0e0e0;
   cursor: pointer;
@@ -490,61 +512,87 @@ onUnmounted(() => {
   justify-content: center;
   transition: all 0.3s ease;
   position: relative;
+  padding: 0;
+  margin: 0;
 }
 
-.voice-btn:hover:not(:disabled) {
+.voice-circle:hover:not(:disabled) {
   border-color: #2d5aa0;
   background: #333;
   transform: scale(1.05);
 }
 
-.voice-btn:disabled {
+.voice-circle:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.voice-btn.active {
+.voice-circle.active {
   border-color: #2d5aa0;
   background: #2d5aa0;
   color: #fff;
 }
 
-.voice-btn.listening {
+.voice-circle.listening {
   border-color: #ff6b6b;
   background: #ff6b6b;
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: pulse-listening 1.5s ease-in-out infinite;
 }
 
-.voice-btn.speaking {
+.voice-circle.speaking {
   border-color: #4ecdc4;
   background: #4ecdc4;
-  animation: pulse 1s ease-in-out infinite;
+  animation: pulse-speaking 1s ease-in-out infinite;
+}
+
+.voice-circle.thinking {
+  border-color: #2d5aa0;
+  background: #2d5aa0;
+  animation: float-thinking 2s ease-in-out infinite;
 }
 
 .voice-icon {
-  width: 32px;
-  height: 32px;
+  width: 64px;
+  height: 64px;
+  transition: transform 0.3s ease;
 }
 
 .voice-icon.listening .pulse {
   animation: pulse-circle 1.5s ease-in-out infinite;
 }
 
-.voice-status {
-  margin: 0;
-  font-size: 0.9rem;
-  color: #999;
-  text-align: center;
+.voice-icon.thinking {
+  animation: spin-thinking 1.5s linear infinite;
 }
 
-@keyframes pulse {
+@keyframes pulse-listening {
   0%, 100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(45, 90, 160, 0.7);
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
   }
   50% {
     transform: scale(1.05);
-    box-shadow: 0 0 0 10px rgba(45, 90, 160, 0);
+    box-shadow: 0 0 0 20px rgba(255, 107, 107, 0);
+  }
+}
+
+@keyframes pulse-speaking {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(78, 205, 196, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 20px rgba(78, 205, 196, 0);
+  }
+}
+
+@keyframes float-thinking {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-10px) scale(1.02);
   }
 }
 
@@ -559,76 +607,25 @@ onUnmounted(() => {
   }
 }
 
-.input-form {
-  display: flex;
-  gap: 0.75rem;
-  align-items: flex-end;
-}
-
-.message-input {
-  flex: 1;
-  padding: 0.75rem 1rem;
-  background: #2a2a2a;
-  color: #e0e0e0;
-  border: 1px solid #444;
-  border-radius: 8px;
-  font-family: inherit;
-  font-size: 1rem;
-  resize: none;
-  min-height: 44px;
-  max-height: 150px;
-  overflow-y: auto;
-  transition: border-color 0.2s;
-}
-
-.message-input:focus {
-  outline: none;
-  border-color: #2d5aa0;
-}
-
-.message-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.message-input::placeholder {
-  color: #666;
-}
-
-.send-btn {
-  padding: 0.75rem 1.5rem;
-  background: #2d5aa0;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.2s;
-  min-width: 80px;
-}
-
-.send-btn:hover:not(:disabled) {
-  background: #3d6ab0;
-}
-
-.send-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+@keyframes spin-thinking {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-  .chat-container {
-    height: 100vh;
+  .voice-circle {
+    width: 140px;
+    height: 140px;
   }
 
-  .message {
-    max-width: 90%;
-  }
-
-  .chat-header h1 {
-    font-size: 1.5rem;
+  .voice-icon {
+    width: 56px;
+    height: 56px;
   }
 }
 </style>

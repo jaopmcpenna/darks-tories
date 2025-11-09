@@ -45,8 +45,10 @@ app.get('/health', (req, res) => {
 // Import routes
 import chatRoutes from './routes/chat'
 import voiceRoutes from './routes/voice'
+import storiesRoutes from './routes/stories'
 app.use('/chat', chatRoutes)
 app.use('/voice', voiceRoutes)
+app.use('/stories', storiesRoutes)
 
 // Export Cloud Function
 export const api = functions.region('us-central1').https.onRequest(app)
