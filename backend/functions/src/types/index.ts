@@ -22,10 +22,15 @@ export interface ChatMessage {
 export interface ChatRequest {
   messages: ChatMessage[]
   stream?: boolean
+  gameState?: import('./game').GameState
+  gameSession?: import('./game').GameSession
 }
 
 export interface ChatResponse {
   message: ChatMessage
   success: boolean
+  gameState?: import('./game').GameState
+  selectedStoryId?: string
+  completedStoryIds?: string[]
 }
 

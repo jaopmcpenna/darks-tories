@@ -1,13 +1,14 @@
 import apiClient from './client'
-import type { ChatMessage, ChatRequest, ChatResponse, StreamChunk } from '../../types'
+import type { ChatMessage, ChatRequest, ChatResponse, StreamChunk, GameSession } from '../../types'
 
 /**
  * Send a message and get a complete response
  */
-export async function sendMessage(messages: ChatMessage[]): Promise<ChatMessage> {
+export async function sendMessage(messages: ChatMessage[], gameSession?: GameSession): Promise<ChatResponse> {
   const request: ChatRequest = {
     messages,
     stream: false,
+    gameSession,
   }
 
   const response = await apiClient.post<ChatResponse>('/chat', request)
@@ -16,17 +17,18 @@ export async function sendMessage(messages: ChatMessage[]): Promise<ChatMessage>
     throw new Error(response.data.message?.content || 'Failed to send message')
   }
 
-  return response.data.message
+  return response.data
 }
 
 /**
  * Stream a message response
  * Returns an async generator that yields chunks of the response
  */
-export async function* streamMessage(messages: ChatMessage[]): AsyncGenerator<string, void, unknown> {
+export async function* streamMessage(messages: ChatMessage[], gameSession?: GameSession): AsyncGenerator<string, void, unknown> {
   const request: ChatRequest = {
     messages,
     stream: true,
+    gameSession,
   }
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api/api'
@@ -80,6 +82,10 @@ export async function* streamMessage(messages: ChatMessage[]): AsyncGenerator<st
             if (data.chunk) {
               yield data.chunk
             }
+            
+            if (data.metadata) {
+              yield { metadata: data.metadata } as any
+            }
           } catch (parseError) {
             // Skip invalid JSON lines
             console.warn('Failed to parse SSE data:', line, parseError)
@@ -102,6 +108,10 @@ export async function* streamMessage(messages: ChatMessage[]): AsyncGenerator<st
             
             if (data.chunk) {
               yield data.chunk
+            }
+            
+            if (data.metadata) {
+              yield { metadata: data.metadata } as any
             }
           } catch (parseError) {
             console.warn('Failed to parse SSE data:', line, parseError)

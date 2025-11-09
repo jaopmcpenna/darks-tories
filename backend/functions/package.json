@@ -4,11 +4,14 @@
   "description": "Firebase Cloud Functions for Dark Stories API",
   "scripts": {
     "build": "tsc",
+    "watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "seed": "npm run build && FIRESTORE_EMULATOR_HOST=localhost:8081 GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js",
+    "seed:force": "npm run build && FIRESTORE_EMULATOR_HOST=localhost:8081 GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js --force"
   },
   "engines": {
     "node": "20"
