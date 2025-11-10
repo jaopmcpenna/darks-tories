@@ -59,13 +59,57 @@
 
     <!-- Voice Circle -->
     <div class="voice-circle-wrapper">
+      <!-- Error Message -->
+      <div v-if="voiceStore.error" class="error-message">
+        <p>{{ voiceStore.error }}</p>
+        <button @click="voiceStore.clearError()" class="error-close-btn">×</button>
+      </div>
+
+      <!-- Debug Panel Toggle -->
+      <button
+        @click="toggleDebugPanel"
+        class="debug-toggle-btn"
+        type="button"
+        title="Debug Logs"
+      >
+        🐛
+      </button>
+
+      <!-- Debug Panel -->
+      <div v-if="showDebugPanel" class="debug-panel">
+        <div class="debug-panel-header">
+          <h3>Debug Logs</h3>
+          <div class="debug-panel-actions">
+            <button @click="clearLogs" class="debug-btn-small">Limpar</button>
+            <button @click="toggleDebugPanel" class="debug-btn-small">×</button>
+          </div>
+        </div>
+        <div class="debug-panel-content">
+          <div v-if="logs.length === 0" class="debug-empty">
+            Nenhum log ainda. Tente gravar um áudio.
+          </div>
+          <div v-else class="debug-logs">
+            <div
+              v-for="log in logs"
+              :key="log.id"
+              :class="['debug-log', `debug-log-${log.level}`]"
+            >
+              <span class="debug-log-time">{{ formatTime(log.timestamp) }}</span>
+              <span class="debug-log-message">{{ log.message }}</span>
+              <pre v-if="log.data" class="debug-log-data">{{ JSON.stringify(log.data, null, 2) }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <button
         @click="toggleVoiceMode"
         :class="['voice-circle', { 
           active: voiceStore.isVoiceModeActive, 
           listening: voiceStore.isListening, 
           speaking: voiceStore.isSpeaking,
-          thinking: chatStore.isLoading || chatStore.isStreaming
+          thinking: chatStore.isLoading || chatStore.isStreaming,
+          error: !!voiceStore.error
         }]"
         :disabled="chatStore.isLoading && !voiceStore.isListening && !voiceStore.isSpeaking"
         type="button"
@@ -105,9 +149,26 @@ import { useChatStore } from '../stores/chat'
 import { useVoiceStore } from '../stores/voice'
 import { getStories } from '../services/api/stories'
 import type { Story } from '../services/api/stories'
+import { useDebugLogs } from '../composables/useDebugLogs'
 
 const chatStore = useChatStore()
 const voiceStore = useVoiceStore()
+
+// Debug logs
+const { logs, showDebugPanel, toggleDebugPanel, clearLogs, setupConsoleInterception, restoreConsole } = useDebugLogs()
+
+// Format time for display
+const formatTime = (timestamp: number): string => {
+  const date = new Date(timestamp)
+  const timeStr = date.toLocaleTimeString('pt-BR', { 
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+  const ms = date.getMilliseconds().toString().padStart(3, '0')
+  return `${timeStr}.${ms}`
+}
 
 // Stories sidebar state
 const sidebarOpen = ref(true)
@@ -122,6 +183,9 @@ const isCompleted = (storyId: string): boolean => {
 
 // Load stories on mount
 onMounted(async () => {
+  // Setup console interception for debug logs
+  setupConsoleInterception()
+  
   await loadStories()
   
   // Watch for changes in completed stories to update the UI
@@ -131,6 +195,12 @@ onMounted(async () => {
       // Stories list will automatically update due to reactivity
     }
   )
+})
+
+// Cleanup on unmount
+onUnmounted(() => {
+  restoreConsole()
+  voiceStore.cleanup()
 })
 
 // Load stories from API
@@ -149,23 +219,37 @@ const loadStories = async () => {
 
 // Voice mode handlers
 const toggleVoiceMode = async () => {
+  // Mark user interaction (click counts as interaction for autoplay policy)
+  voiceStore.markUserInteraction()
+  
+  // Clear any previous errors when starting a new action
+  if (voiceStore.error && !voiceStore.isListening) {
+    voiceStore.clearError()
+  }
+  
   if (voiceStore.isVoiceModeActive) {
     // If currently listening, stop and process
     if (voiceStore.isListening) {
       try {
+        console.log('[ChatView] Stopping listening and processing...')
         const transcribedText = await voiceStore.stopListening()
+        console.log('[ChatView] Transcribed text:', transcribedText)
+        
         if (transcribedText && transcribedText.trim()) {
+          // Mark user interaction (sending message counts as interaction)
+          voiceStore.markUserInteraction()
           // Send the transcribed message
           await chatStore.sendChatMessage(transcribedText, true)
+        } else {
+          console.warn('[ChatView] No transcribed text received')
+          // Don't show error for empty transcription, just silently continue
         }
         // Keep voice mode active but DON'T restart listening automatically
         // User needs to click again to speak
       } catch (error) {
-        console.error('Error handling voice input:', error)
-        // Only deactivate if it's a critical error (not just empty transcription)
-        if (error instanceof Error && !error.message.includes('empty')) {
-          voiceStore.setVoiceModeActive(false)
-        }
+        console.error('[ChatView] Error handling voice input:', error)
+        // Error is already set in the store, don't deactivate voice mode
+        // Let user try again
       }
     } else if (voiceStore.isSpeaking) {
       // If speaking, stop the audio
@@ -173,10 +257,13 @@ const toggleVoiceMode = async () => {
     } else {
       // Not listening and not speaking - start listening
       try {
+        console.log('[ChatView] Starting listening...')
         await voiceStore.startListening()
+        console.log('[ChatView] Listening started successfully')
       } catch (error) {
-        console.error('Failed to start listening:', error)
-        voiceStore.setVoiceModeActive(false)
+        console.error('[ChatView] Failed to start listening:', error)
+        // Error is already set in the store, don't deactivate voice mode
+        // Let user try again
       }
     }
   } else {
@@ -189,6 +276,23 @@ const toggleVoiceMode = async () => {
 
 // Track the last message we've spoken to avoid duplicate playback
 const lastSpokenMessageId = ref<string | null>(null)
+// Track pending messages that couldn't be played due to autoplay policy
+const pendingMessage = ref<{ id: string; content: string } | null>(null)
+
+// Function to try playing pending message when user interacts
+const tryPlayPendingMessage = async () => {
+  if (pendingMessage.value && voiceStore.hasUserInteracted && !voiceStore.isSpeaking) {
+    const message = pendingMessage.value
+    pendingMessage.value = null
+    
+    try {
+      await voiceStore.speak(message.content)
+      lastSpokenMessageId.value = message.id
+    } catch (error) {
+      console.error('[ChatView] Error playing pending message:', error)
+    }
+  }
+}
 
 // Auto-play audio when assistant message arrives (if voice mode is active)
 // Watch both lastMessage content and streaming state to ensure we only play after streaming completes
@@ -217,23 +321,49 @@ watch(
       !isLoading &&
       messageId !== lastSpokenMessageId.value
     ) {
+      // Only attempt autoplay if user has interacted
+      if (!voiceStore.hasUserInteracted) {
+        // Store message to play later when user interacts
+        pendingMessage.value = { id: messageId!, content: message.content }
+        console.log('[ChatView] Autoplay blocked, message queued for next user interaction')
+        return
+      }
+      
       try {
         lastSpokenMessageId.value = messageId
         await voiceStore.speak(message.content)
         // After speaking, DON'T restart listening automatically
         // User needs to click again to speak
       } catch (error) {
-        console.error('Error speaking message:', error)
+        // Log error with better serialization
+        const errorInfo = error instanceof Error 
+          ? {
+              name: error.name,
+              message: error.message,
+              stack: error.stack
+            }
+          : error
+        console.error('[ChatView] Error speaking message:', errorInfo)
+        // If autoplay was blocked, queue the message
+        if (error instanceof Error && 
+            (error.message.includes('user interaction') || 
+             error.message.includes('NotAllowedError') ||
+             error.name === 'NotAllowedError')) {
+          pendingMessage.value = { id: messageId!, content: message.content }
+        }
       }
     }
   },
   { immediate: false }
 )
 
-// Cleanup on unmount
-onUnmounted(() => {
-  voiceStore.cleanup()
+// Watch for user interaction to retry pending messages
+watch(() => voiceStore.hasUserInteracted, (hasInteracted) => {
+  if (hasInteracted) {
+    tryPlayPendingMessage()
+  }
 })
+
 </script>
 
 <style scoped>
@@ -549,6 +679,250 @@ onUnmounted(() => {
   border-color: #2d5aa0;
   background: #2d5aa0;
   animation: float-thinking 2s ease-in-out infinite;
+}
+
+.voice-circle.error {
+  border-color: #ff6b6b;
+  background: #ff6b6b;
+}
+
+.error-message {
+  position: absolute;
+  bottom: 200px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #ff6b6b;
+  color: #fff;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  max-width: 90%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  animation: slide-up 0.3s ease-out;
+}
+
+.error-message p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.error-close-btn {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.error-close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Debug Panel */
+.debug-toggle-btn {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #2d5aa0;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  z-index: 999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
+}
+
+.debug-toggle-btn:hover {
+  background: #3d6ab0;
+  transform: scale(1.1);
+}
+
+.debug-panel {
+  position: fixed;
+  bottom: 70px;
+  right: 1rem;
+  width: 90%;
+  max-width: 500px;
+  max-height: 60vh;
+  background: #1a1a1a;
+  border: 2px solid #2d5aa0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.debug-panel-header {
+  padding: 1rem;
+  background: #2d5aa0;
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #333;
+}
+
+.debug-panel-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.debug-panel-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.debug-btn-small {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: #fff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background 0.2s;
+}
+
+.debug-btn-small:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.debug-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.debug-empty {
+  padding: 2rem;
+  text-align: center;
+  color: #999;
+}
+
+.debug-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.debug-log {
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.debug-log-log {
+  background: #2a2a2a;
+  color: #e0e0e0;
+  border-left: 3px solid #2d5aa0;
+}
+
+.debug-log-warn {
+  background: #3a2a1a;
+  color: #ffa500;
+  border-left: 3px solid #ffa500;
+}
+
+.debug-log-error {
+  background: #3a1a1a;
+  color: #ff6b6b;
+  border-left: 3px solid #ff6b6b;
+}
+
+.debug-log-info {
+  background: #1a2a3a;
+  color: #4ecdc4;
+  border-left: 3px solid #4ecdc4;
+}
+
+.debug-log-time {
+  color: #999;
+  font-size: 0.75rem;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.debug-log-message {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.debug-log-data {
+  margin: 0.5rem 0 0 0;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.debug-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.debug-panel-content::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.debug-panel-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.debug-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .debug-panel {
+    width: calc(100% - 2rem);
+    max-height: 50vh;
+    bottom: 70px;
+  }
+  
+  .debug-toggle-btn {
+    bottom: 1rem;
+    right: 1rem;
+  }
 }
 
 .voice-icon {

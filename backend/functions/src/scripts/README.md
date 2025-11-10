@@ -12,9 +12,30 @@ O script `seedStories.ts` adiciona histórias iniciais ao Firestore.
    npm run seed
    ```
 
-2. **Para produção (após deploy):**
-   - Execute o script após garantir que o Firebase Admin está configurado corretamente
-   - Ou use o Firebase Console para adicionar histórias manualmente
+2. **Para produção (banco de dados real):**
+   
+   **Opção A: Usando o script automático (Recomendado)**
+   ```bash
+   # Na raiz do projeto
+   ./seed-prod.sh
+   
+   # Com modo force (substitui histórias existentes)
+   ./seed-prod.sh --force
+   ```
+   
+   **Opção B: Manualmente**
+   ```bash
+   cd backend/functions
+   npm run seed:prod
+   
+   # Com modo force
+   npm run seed:prod:force
+   ```
+   
+   **Importante:** 
+   - Certifique-se de estar logado no Firebase: `firebase login`
+   - O script detecta automaticamente se está usando emulador ou produção
+   - Se `FIRESTORE_EMULATOR_HOST` não estiver definido, usa produção
 
 ### Estrutura esperada no Firestore:
 

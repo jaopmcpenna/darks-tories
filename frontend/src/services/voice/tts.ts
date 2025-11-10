@@ -7,6 +7,22 @@ export interface SynthesizeOptions {
   useSpeakerBoost?: boolean
 }
 
+// Get API base URL (same logic as client.ts)
+const getApiBaseUrl = (): string => {
+  // If explicitly set via environment variable, use that
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL
+  }
+  
+  // In production (when not running on localhost), use Firebase Functions URL
+  if (import.meta.env.PROD || (typeof window !== 'undefined' && !window.location.hostname.includes('localhost'))) {
+    return 'https://us-central1-dark-stories-ai-7f82e.cloudfunctions.net/api'
+  }
+  
+  // Default to localhost emulator for development
+  return 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+}
+
 /**
  * Synthesize text to speech and return audio URL
  * @param text - Text to synthesize
@@ -18,7 +34,7 @@ export async function synthesizeSpeech(
   options: SynthesizeOptions = {}
 ): Promise<string> {
   try {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+    const API_BASE_URL = getApiBaseUrl()
     const url = `${API_BASE_URL}/voice/synthesize`
 
     const response = await fetch(url, {
@@ -64,7 +80,7 @@ export async function synthesizeSpeechStream(
   onChunk?: (chunk: Uint8Array) => void
 ): Promise<string> {
   try {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+    const API_BASE_URL = getApiBaseUrl()
     const url = `${API_BASE_URL}/voice/synthesize`
 
     const response = await fetch(url, {
@@ -128,7 +144,13 @@ export async function synthesizeSpeechStream(
  */
 export function playAudio(audioUrl: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const audio = new Audio(audioUrl)
+    // Create audio element with playsinline attribute for mobile Safari
+    // This is required for autoplay to work on iOS devices
+    const audio = document.createElement('audio')
+    audio.src = audioUrl
+    audio.setAttribute('playsinline', '')
+    audio.setAttribute('webkit-playsinline', '') // For older iOS versions
+    audio.preload = 'auto'
     
     audio.onended = () => {
       // Clean up blob URL if it's a blob URL

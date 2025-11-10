@@ -11,7 +11,9 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "seed": "npm run build && FIRESTORE_EMULATOR_HOST=localhost:8081 GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js",
-    "seed:force": "npm run build && FIRESTORE_EMULATOR_HOST=localhost:8081 GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js --force"
+    "seed:force": "npm run build && FIRESTORE_EMULATOR_HOST=localhost:8081 GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js --force",
+    "seed:prod": "npm run build && GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js",
+    "seed:prod:force": "npm run build && GCLOUD_PROJECT=dark-stories-ai-7f82e node lib/scripts/seedStories.js --force"
   },
   "engines": {
     "node": "20"

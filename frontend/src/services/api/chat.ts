@@ -1,6 +1,19 @@
 import apiClient from './client'
 import type { ChatMessage, ChatRequest, ChatResponse, StreamChunk, GameSession } from '../../types'
 
+// Get API base URL (same logic as client.ts)
+const getApiBaseUrl = (): string => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL
+  }
+  
+  if (import.meta.env.PROD || (typeof window !== 'undefined' && !window.location.hostname.includes('localhost'))) {
+    return 'https://us-central1-dark-stories-ai-7f82e.cloudfunctions.net/api'
+  }
+  
+  return 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+}
+
 /**
  * Send a message and get a complete response
  */
@@ -31,7 +44,7 @@ export async function* streamMessage(messages: ChatMessage[], gameSession?: Game
     gameSession,
   }
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+  const API_BASE_URL = getApiBaseUrl()
   const url = `${API_BASE_URL}/chat/stream`
 
   const response = await fetch(url, {

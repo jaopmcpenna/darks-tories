@@ -1,7 +1,24 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+// Determine API base URL based on environment
+// In production, use Firebase Cloud Functions URL
+// In development, use localhost emulator or custom VITE_API_BASE_URL
+const getApiBaseUrl = (): string => {
+  // If explicitly set via environment variable, use that
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL
+  }
+  
+  // In production (when not running on localhost), use Firebase Functions URL
+  if (import.meta.env.PROD || (typeof window !== 'undefined' && !window.location.hostname.includes('localhost'))) {
+    return 'https://us-central1-dark-stories-ai-7f82e.cloudfunctions.net/api'
+  }
+  
+  // Default to localhost emulator for development
+  return 'http://127.0.0.1:5001/dark-stories-ai-7f82e/us-central1/api'
+}
+
+const API_BASE_URL = getApiBaseUrl()
 
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
